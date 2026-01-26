@@ -87,7 +87,7 @@ def add_vertical_gridlines(ax, x_start, x_end, choice: str):
     for t in ticks:
         ax.axvline(t, linewidth=0.8, alpha=0.25)
 
-st.title("CSVグラフ化るツール")
+st.title("CSVグラフ化ツール")
 st.caption("start/end は HH:MM:SS。未入力なら全範囲。アップロードしたファイルだけ描画します。")
 
 # --- アップロードとCT比選択（各ファイルごと） ---
