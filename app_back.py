@@ -140,11 +140,17 @@ def rpm_interval_mean_minutes(rpm_df: pd.DataFrame, base: pd.Timestamp, start_mi
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CSVグラフ化（raw太線）＋ rpm 1分平均/±σ（階段）")
-st.caption(
-    "CSV：1列目=年月日、2列目=時分秒ミリ秒、3列目=power。"
-    "rpm/pv/battは任意アップロード。"
-    "横軸は『実時間』または『経過時間』を切替可能。"
+st.title("CSVグラフ化ツール")
+st.caption("start/end は HH:MM:SS。未入力なら全範囲。アップロードしたファイルだけ描画します。")
+
+# ★ 横軸モード（必ず見えるように上に配置）
+xaxis_mode = st.radio("横軸の表示方法", ["実時間", "経過時間"], index=0, horizontal=True)
+elapsed_unit = st.radio(
+    "経過時間の単位",
+    ELAPSED_UNIT_CHOICES,
+    index=0,
+    horizontal=True,
+    disabled=(xaxis_mode == "実時間"),
 )
 
 # アップロード & CT比
@@ -161,27 +167,15 @@ with col3:
 
 c1, c2 = st.columns(2)
 with c1:
-    start_hms = st.text_input("start（HH:MM:SS）未入力なら最小時刻", value="")
+    start_hms = st.text_input("start（HH:MM:SS）", value="")
 with c2:
-    end_hms = st.text_input("end（HH:MM:SS）未入力なら最大時刻", value="")
-
-# 横軸モード
-xaxis_mode = st.radio("横軸の表示方法", ["実時間", "経過時間"], index=0, horizontal=True)
-
-# 経過時間単位（経過時間のときのみ有効）
-elapsed_unit = st.radio(
-    "経過時間の単位",
-    ELAPSED_UNIT_CHOICES,
-    index=0,
-    horizontal=True,
-    disabled=(xaxis_mode == "実時間"),
-)
+    end_hms = st.text_input("end（HH:MM:SS）", value="")
 
 # rpm統計（重ね描き & 表示）
 calc_rpm_stats = st.checkbox("rpmの1分平均・±σをrawグラフに重ねて表示する", value=True)
 
 # 縦補助線の選択（単一）
-grid_choice = st.radio("縦補助線（間隔）", GRID_CHOICES, index=2, horizontal=True)
+grid_choice = st.radio("縦補助線（時間間隔）", GRID_CHOICES, index=2, horizontal=True)
 
 # 追加：指定区間平均（分）
 st.divider()
@@ -217,7 +211,7 @@ if run:
         st.warning("ファイルが選択されていません。rpm/pv/battのいずれかをアップロードしてください。")
         st.stop()
 
-    # 経過時間基準（global_base）：start入力があればその時刻、なければ表示対象の最小時刻
+    # 経過時間基準（global_base）
     bases = []
     for df, base in [(rpm_df, rpm_base), (pv_df, pv_base), (batt_df, batt_base)]:
         if df is not None and not df.empty and pd.notna(base):
@@ -252,8 +246,8 @@ if run:
     else:
         add_vertical_gridlines_elapsed(ax, x_end_elapsed, grid_choice, elapsed_unit)
 
-    # raw線（太線） 色指定：rpm青 / pv赤 / batt緑
     if xaxis_mode == "実時間":
+        # raw線（太線） 色指定：rpm青 / pv赤 / batt緑
         if rpm_df is not None and not rpm_df.empty:
             ax.plot(rpm_df.index, rpm_df["realpower"].values, linewidth=2.5, color="blue", label="rpm raw")
         if pv_df is not None and not pv_df.empty:
@@ -281,7 +275,6 @@ if run:
 
         ax.set_xlim(t_start, t_end)
         ax.set_xlabel("time")
-        # 時刻表示を見やすく（HH:MM:SS）
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
 
     else:
@@ -343,7 +336,7 @@ if run:
     # 指定区間（分）rpm平均（チェック時のみ）
     # -----------------------------
     if calc_interval_mean:
-        st.subheader("指定区間（分単位）のrpm平均値")
+        st.subheader("指定区間（分単位）のrpm平均値（経過時間基準）")
         if rpm_df is None or rpm_df.empty:
             st.warning("rpm.csv が未選択（または範囲内データなし）のため、区間平均を計算できません。")
         else:
