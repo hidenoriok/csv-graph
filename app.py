@@ -142,7 +142,7 @@ if run:
     x_start = min(r[0] for r in ranges)
     x_end   = max(r[1] for r in ranges)
 
-    st.subheader("raw グラフ（太線）＋ rpm 1分平均/±σ")
+    st.subheader("raw グラフ＋ rpm 1分平均/±σ")
     fig, ax = plt.subplots(figsize=(14, 6))
 
     # ★ 縦補助線
@@ -150,11 +150,11 @@ if run:
 
     # --- raw（太線） 色指定：rpm青 / pv赤 / batt緑 ---
     if rpm_df is not None and not rpm_df.empty:
-        ax.plot(rpm_df.index, rpm_df["realpower"], linewidth=1.0, color="blue", label="rpm raw")
+        ax.plot(rpm_df.index, rpm_df["realpower"], linewidth=0.5, color="blue", label="rpm raw")
     if pv_df is not None and not pv_df.empty:
-        ax.plot(pv_df.index, pv_df["realpower"], linewidth=1.0, color="red", label="pv raw")
+        ax.plot(pv_df.index, pv_df["realpower"], linewidth=0.5, color="red", label="pv raw")
     if batt_df is not None and not batt_df.empty:
-        ax.plot(batt_df.index, batt_df["realpower"], linewidth=1.0, color="green", label="batt raw")
+        ax.plot(batt_df.index, batt_df["realpower"], linewidth=0.5, color="green", label="batt raw")
 
     rpm_stats = None
 
