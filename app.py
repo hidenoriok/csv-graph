@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="raw + rpm 1分平均/±σ（階段）", layout="wide")
+st.set_page_config(page_title="raw 1分平均/±σ（階段）", layout="wide")
 
 CT_OPTIONS = [250, 300, 500]
 CT_TO_FACTOR = {250: 3000, 300: 3600, 500: 6000}
