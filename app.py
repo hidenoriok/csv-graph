@@ -5,8 +5,6 @@ import numpy as np
 import matplotlib.dates as mdates
 
 st.set_page_config(page_title="raw 1分平均/±σ（階段）", layout="wide")
-st.info("DEBUG: axis-toggle code version = 2026-01-31-AXIS1")
-
 
 CT_OPTIONS = [250, 300, 500]
 CT_TO_FACTOR = {250: 3000, 300: 3600, 500: 6000}
@@ -146,7 +144,7 @@ with c1:
 with c2:
     end_hms = st.text_input("end（HH:MM:SS）", value="")
 
-calc_rpm_stats = st.checkbox("rpmの1分平均・±σをrawグラフに重ねて表示する", value=True)
+calc_rpm_stats = st.checkbox("rpmの1分平均・±σをrawグラフに重ねて表示する", value=False)
 
 grid_choice = st.radio("縦補助線（時間間隔）", GRID_CHOICES, index=2, horizontal=True)  # デフォルト=1秒
 
