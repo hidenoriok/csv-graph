@@ -1,6 +1,8 @@
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib.dates as mdates
 
 st.set_page_config(page_title="raw 1分平均/±σ（階段）", layout="wide")
 
@@ -8,12 +10,11 @@ CT_OPTIONS = [250, 300, 500]
 CT_TO_FACTOR = {250: 3000, 300: 3600, 500: 6000}
 
 GRID_CHOICES = ["なし", "0.5秒", "1秒", "1分", "5分"]
-GRID_TO_PANDAS_FREQ = {
-    "0.5秒": "500ms",
-    "1秒": "1s",
-    "1分": "1min",
-    "5分": "5min",
-}
+GRID_STEP_SECONDS = {"0.5秒": 0.5, "1秒": 1.0, "1分": 60.0, "5分": 300.0}
+GRID_TO_PANDAS_FREQ = {"0.5秒": "500ms", "1秒": "1s", "1分": "1min", "5分": "5min"}
+
+ELAPSED_UNIT_CHOICES = ["秒", "分"]
+UNIT_TO_DIV = {"秒": 1.0, "分": 60.0}
 
 def load_csv(uploaded_file, ct_ratio: int) -> pd.DataFrame:
     """
@@ -35,20 +36,25 @@ def load_csv(uploaded_file, ct_ratio: int) -> pd.DataFrame:
     out["realpower"] = out["power"] * -factor / 100.0
     return out
 
-def apply_time_range(df: pd.DataFrame, start_hms: str, end_hms: str) -> pd.DataFrame:
+def apply_time_range(df: pd.DataFrame, start_hms: str, end_hms: str) -> tuple[pd.DataFrame, pd.Timestamp]:
     """
     start/end は HH:MM:SS のみ。
     未入力なら df の最小/最大。
     入力ありなら df最小日付を基準日にして合成。
     end < start なら翌日に繰り上げ。
+
+    戻り値：(スライス済みdf, base_time)
+    base_time は
+      - start入力あり: その時刻（経過時間 0 の基準）
+      - start入力なし: スライス後の最小時刻
     """
     if df.empty:
-        return df
+        return df, pd.NaT
 
     has_start = bool(start_hms.strip())
     has_end = bool(end_hms.strip())
     if not has_start and not has_end:
-        return df
+        return df, df.index.min()
 
     base_date = df.index.min().normalize()
 
@@ -58,7 +64,9 @@ def apply_time_range(df: pd.DataFrame, start_hms: str, end_hms: str) -> pd.DataF
     if end < start:
         end = end + pd.Timedelta(days=1)
 
-    return df.loc[(df.index >= start) & (df.index <= end)]
+    sliced = df.loc[(df.index >= start) & (df.index <= end)]
+    base_time = start if has_start else (sliced.index.min() if not sliced.empty else start)
+    return sliced, base_time
 
 def rpm_minute_stats_step(rpm_realpower: pd.Series) -> pd.DataFrame:
     """
@@ -78,8 +86,12 @@ def rpm_minute_stats_step(rpm_realpower: pd.Series) -> pd.DataFrame:
 
     return stats
 
-def add_vertical_gridlines(ax, x_start, x_end, choice: str):
-    """選択した間隔で縦補助線（時間軸の縦線）を追加"""
+def to_elapsed_x(index: pd.DatetimeIndex, base: pd.Timestamp, unit: str) -> np.ndarray:
+    div = UNIT_TO_DIV[unit]
+    return ((index - base).total_seconds() / div).astype(float)
+
+def add_vertical_gridlines_datetime(ax, x_start, x_end, choice: str):
+    """実時間軸：選択した間隔で縦補助線（axvline(datetime))"""
     if choice == "なし":
         return
     freq = GRID_TO_PANDAS_FREQ[choice]
@@ -87,8 +99,32 @@ def add_vertical_gridlines(ax, x_start, x_end, choice: str):
     for t in ticks:
         ax.axvline(t, linewidth=0.8, alpha=0.25)
 
+def add_vertical_gridlines_elapsed(ax, x_end: float, choice: str, unit: str):
+    """経過時間軸：選択した間隔で縦補助線（axvline(x))"""
+    if choice == "なし":
+        return
+    step_sec = GRID_STEP_SECONDS[choice]
+    step = step_sec / UNIT_TO_DIV[unit]  # 秒→そのまま、分→/60
+    ticks = np.arange(0.0, x_end + step, step)
+    for x in ticks:
+        ax.axvline(x, linewidth=0.8, alpha=0.25)
+
+# -----------------------------
+# UI
+# -----------------------------
 st.title("CSVグラフ化ツール")
 st.caption("start/end は HH:MM:SS。未入力なら全範囲。アップロードしたファイルだけ描画します。")
+
+# ★ 追加：横軸モード（実時間 / 経過時間）
+xaxis_mode = st.radio("横軸の表示方法", ["実時間", "経過時間"], index=0, horizontal=True)
+
+elapsed_unit = st.radio(
+    "経過時間の単位（経過時間を選んだ時）",
+    ELAPSED_UNIT_CHOICES,
+    index=0,
+    horizontal=True,
+    disabled=(xaxis_mode == "実時間"),
+)
 
 # --- アップロードとCT比選択（各ファイルごと） ---
 col1, col2, col3 = st.columns(3)
@@ -114,27 +150,37 @@ grid_choice = st.radio("縦補助線（時間間隔）", GRID_CHOICES, index=2, 
 
 run = st.button("実行", type="primary")
 
+# -----------------------------
+# 実行
+# -----------------------------
 if run:
     def try_load(name, up, ct):
         if not up:
-            return None
+            return None, pd.NaT
         try:
             df = load_csv(up, ct)
-            df = apply_time_range(df, start_hms, end_hms)
-            return df
+            df, base = apply_time_range(df, start_hms, end_hms)
+            return df, base
         except Exception as e:
             st.error(f"{name} 読み込みエラー: {e}")
-            return None
+            return None, pd.NaT
 
-    rpm_df = try_load("rpm", up_rpm, ct_rpm)
-    pv_df = try_load("pv", up_pv, ct_pv)
-    batt_df = try_load("batt", up_batt, ct_batt)
+    rpm_df, rpm_base = try_load("rpm", up_rpm, ct_rpm)
+    pv_df, pv_base = try_load("pv", up_pv, ct_pv)
+    batt_df, batt_base = try_load("batt", up_batt, ct_batt)
 
     if (rpm_df is None) and (pv_df is None) and (batt_df is None):
         st.warning("ファイルが選択されていません。rpm/pv/battのいずれかをアップロードしてください。")
         st.stop()
 
-    # 表示範囲（縦線用）: 描画するデータのmin/max
+    # 経過時間の基準（start入力があればそれ、なければ表示対象の最小時刻）
+    bases = []
+    for df, base in [(rpm_df, rpm_base), (pv_df, pv_base), (batt_df, batt_base)]:
+        if df is not None and not df.empty and pd.notna(base):
+            bases.append(base)
+    global_base = min(bases) if bases else pd.Timestamp.now()
+
+    # 表示範囲（実時間のmin/max）: 描画するデータのmin/max
     ranges = []
     for df in [rpm_df, pv_df, batt_df]:
         if df is not None and not df.empty:
@@ -142,46 +188,74 @@ if run:
     x_start = min(r[0] for r in ranges)
     x_end   = max(r[1] for r in ranges)
 
-    st.subheader("raw グラフ＋ rpm 1分平均/±σ")
-    fig, ax = plt.subplots(figsize=(14, 6))
-
-    # ★ 縦補助線
-    add_vertical_gridlines(ax, x_start, x_end, grid_choice)
-
-    # --- raw（太線） 色指定：rpm青 / pv赤 / batt緑 ---
-    if rpm_df is not None and not rpm_df.empty:
-        ax.plot(rpm_df.index, rpm_df["realpower"], linewidth=0.5, color="blue", label="rpm raw")
-    if pv_df is not None and not pv_df.empty:
-        ax.plot(pv_df.index, pv_df["realpower"], linewidth=0.5, color="red", label="pv raw")
-    if batt_df is not None and not batt_df.empty:
-        ax.plot(batt_df.index, batt_df["realpower"], linewidth=0.5, color="green", label="batt raw")
-
+    # rpm統計
     rpm_stats = None
-
-    # --- rpm 1分平均/±σ（階段表示） ---
     if calc_rpm_stats and (rpm_df is not None) and (not rpm_df.empty):
         rpm_stats = rpm_minute_stats_step(rpm_df["realpower"])
-        if not rpm_stats.empty:
-            # 平均：赤の破線（階段）
-            ax.step(
-                rpm_stats.index, rpm_stats["mean_1min"],
-                where="post", linewidth=2.5, color="red", linestyle="--",
-                label="rpm mean (1min, step)"
-            )
-            # ±σ：薄い赤の破線（階段）
-            ax.step(
-                rpm_stats.index, rpm_stats["mean_plus_sigma"],
-                where="post", linewidth=1.8, color="red", linestyle="--", alpha=0.35,
-                label="rpm mean + σ (step)"
-            )
-            ax.step(
-                rpm_stats.index, rpm_stats["mean_minus_sigma"],
-                where="post", linewidth=1.8, color="red", linestyle="--", alpha=0.35,
-                label="rpm mean - σ (step)"
-            )
 
-    ax.set_xlim(x_start, x_end)
-    ax.set_xlabel("time")
+    # -----------------------------
+    # グラフ描画
+    # -----------------------------
+    st.subheader("グラフ結果")
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    if xaxis_mode == "実時間":
+        # 縦補助線（実時間）
+        add_vertical_gridlines_datetime(ax, x_start, x_end, grid_choice)
+
+        # raw（太線） 色指定：rpm青 / pv赤 / batt緑
+        if rpm_df is not None and not rpm_df.empty:
+            ax.plot(rpm_df.index, rpm_df["realpower"], linewidth=2.5, color="blue", label="rpm raw")
+        if pv_df is not None and not pv_df.empty:
+            ax.plot(pv_df.index, pv_df["realpower"], linewidth=2.5, color="red", label="pv raw")
+        if batt_df is not None and not batt_df.empty:
+            ax.plot(batt_df.index, batt_df["realpower"], linewidth=2.5, color="green", label="batt raw")
+
+        # rpm 1分平均/±σ（階段）
+        if rpm_stats is not None and not rpm_stats.empty:
+            ax.step(rpm_stats.index, rpm_stats["mean_1min"], where="post",
+                    linewidth=2.5, color="red", linestyle="--", label="rpm mean (1min, step)")
+            ax.step(rpm_stats.index, rpm_stats["mean_plus_sigma"], where="post",
+                    linewidth=1.8, color="red", linestyle="--", alpha=0.35, label="rpm mean + σ (step)")
+            ax.step(rpm_stats.index, rpm_stats["mean_minus_sigma"], where="post",
+                    linewidth=1.8, color="red", linestyle="--", alpha=0.35, label="rpm mean - σ (step)")
+
+        ax.set_xlim(x_start, x_end)
+        ax.set_xlabel("time")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+
+    else:
+        # 経過時間軸（数値）
+        # 表示範囲（経過時間の最大）
+        x_end_elapsed = float(((x_end - global_base).total_seconds()) / UNIT_TO_DIV[elapsed_unit])
+
+        # 縦補助線（経過時間）
+        add_vertical_gridlines_elapsed(ax, x_end_elapsed, grid_choice, elapsed_unit)
+
+        # raw（太線）
+        if rpm_df is not None and not rpm_df.empty:
+            x = to_elapsed_x(rpm_df.index, global_base, elapsed_unit)
+            ax.plot(x, rpm_df["realpower"], linewidth=2.5, color="blue", label="rpm raw")
+        if pv_df is not None and not pv_df.empty:
+            x = to_elapsed_x(pv_df.index, global_base, elapsed_unit)
+            ax.plot(x, pv_df["realpower"], linewidth=2.5, color="red", label="pv raw")
+        if batt_df is not None and not batt_df.empty:
+            x = to_elapsed_x(batt_df.index, global_base, elapsed_unit)
+            ax.plot(x, batt_df["realpower"], linewidth=2.5, color="green", label="batt raw")
+
+        # rpm 1分平均/±σ（階段）
+        if rpm_stats is not None and not rpm_stats.empty:
+            xs = to_elapsed_x(rpm_stats.index, global_base, elapsed_unit)
+            ax.step(xs, rpm_stats["mean_1min"], where="post",
+                    linewidth=2.5, color="red", linestyle="--", label="rpm mean (1min, step)")
+            ax.step(xs, rpm_stats["mean_plus_sigma"], where="post",
+                    linewidth=1.8, color="red", linestyle="--", alpha=0.35, label="rpm mean + σ (step)")
+            ax.step(xs, rpm_stats["mean_minus_sigma"], where="post",
+                    linewidth=1.8, color="red", linestyle="--", alpha=0.35, label="rpm mean - σ (step)")
+
+        ax.set_xlim(0, x_end_elapsed)
+        ax.set_xlabel(f"elapsed time from start ({elapsed_unit})")
+
     ax.set_ylabel("realpower")
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(loc="best")
