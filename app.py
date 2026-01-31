@@ -41,7 +41,6 @@ def apply_time_range(df: pd.DataFrame, start_hms: str, end_hms: str) -> tuple[pd
     has_start = bool(start_hms.strip())
     has_end = bool(end_hms.strip())
 
-    # どちらも未入力なら全範囲＆基準は最小
     if not has_start and not has_end:
         return df, df.index.min()
 
@@ -99,39 +98,17 @@ def add_vertical_gridlines_elapsed(ax, x_end: float, choice: str, unit: str):
 # -----------------------------
 if "data" not in st.session_state:
     st.session_state["data"] = {"rpm": None, "pv": None, "batt": None}
-if "meta" not in st.session_state:
-    st.session_state["meta"] = {"rpm_ct": 300, "pv_ct": 300, "batt_ct": 250}
 
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CSVグラフ化ツール（データ固定→再描画）")
-st.caption("①データ読込（更新）でCSVを読み込み固定。②その後はパラメータ変更で同じデータを再描画します。")
+st.title("CSVグラフ化ツール（データ読込→設定→グラフ）")
+st.caption("①データ読込（更新）でCSVを固定。②その後は設定を変えて同じデータで再描画します。")
 
-# ★ 表示パラメータ（ここはいつでも変更OK）
-xaxis_mode = st.radio("横軸の表示方法", ["実時間", "経過時間"], index=0, horizontal=True)
-elapsed_unit = st.radio(
-    "経過時間の単位（経過時間を選んだ時）",
-    ELAPSED_UNIT_CHOICES,
-    index=0,
-    horizontal=True,
-    disabled=(xaxis_mode == "実時間"),
-)
+# ========== 1) データ読込（最初に表示） ==========
+st.subheader("1) データ読込（更新）")
 
-c1, c2 = st.columns(2)
-with c1:
-    start_hms = st.text_input("start（HH:MM:SS）", value="")
-with c2:
-    end_hms = st.text_input("end（HH:MM:SS）", value="")
-
-calc_rpm_stats = st.checkbox("rpmの1分平均・±σをrawグラフに表示する", value=False)
-grid_choice = st.radio("縦補助線（時間間隔）", GRID_CHOICES, index=2, horizontal=True)
-
-st.divider()
-
-# ★ データ読み込み（更新）エリア：ここだけ押したときに data が変わる
-st.subheader("データ読込（更新）")
 col1, col2, col3 = st.columns(3)
 with col1:
     up_rpm = st.file_uploader("rpm.csv（任意）", type=["csv"], key="rpm_file")
@@ -148,7 +125,7 @@ clear_btn = st.button("データクリア（全削除）")
 
 if clear_btn:
     st.session_state["data"] = {"rpm": None, "pv": None, "batt": None}
-    st.success("データをクリアしました（再度「データ読込（更新）」してください）。")
+    st.success("データをクリアしました。再度「データ読込（更新）」してください。")
 
 if load_btn:
     def load_one(name, up, ct):
@@ -163,29 +140,53 @@ if load_btn:
     st.session_state["data"]["rpm"] = load_one("rpm", up_rpm, ct_rpm)
     st.session_state["data"]["pv"] = load_one("pv", up_pv, ct_pv)
     st.session_state["data"]["batt"] = load_one("batt", up_batt, ct_batt)
-    st.session_state["meta"] = {"rpm_ct": ct_rpm, "pv_ct": ct_pv, "batt_ct": ct_batt}
 
     if (st.session_state["data"]["rpm"] is None
         and st.session_state["data"]["pv"] is None
         and st.session_state["data"]["batt"] is None):
         st.warning("どのファイルも読み込まれていません。")
     else:
-        st.success("データを読み込みました。以後は同じデータで再描画できます。")
+        st.success("データを読み込みました（以後は同じデータで再描画）。")
 
-st.divider()
-
-# -----------------------------
-# 描画（データが存在すれば常に再描画）
-# -----------------------------
+# データがない場合はここで終了（設定・グラフは出さない）
 rpm_raw = st.session_state["data"]["rpm"]
 pv_raw = st.session_state["data"]["pv"]
 batt_raw = st.session_state["data"]["batt"]
 
 if (rpm_raw is None) and (pv_raw is None) and (batt_raw is None):
-    st.info("まだデータがありません。上でファイルを選択して「データ読込（更新）」してください。")
+    st.info("データ未読込です。上でファイルを選択して「データ読込（更新）」してください。")
     st.stop()
 
-# 表示範囲でスライス（表示パラメータ変更のたびにここが再計算される）
+st.divider()
+
+# ========== 2) 表示パラメータ（読込後に表示） ==========
+st.subheader("2) 表示設定（変更すると同じデータで再描画）")
+
+xaxis_mode = st.radio("横軸の表示方法", ["実時間", "経過時間"], index=0, horizontal=True)
+
+elapsed_unit = st.radio(
+    "経過時間の単位（経過時間を選んだ時）",
+    ELAPSED_UNIT_CHOICES,
+    index=0,
+    horizontal=True,
+    disabled=(xaxis_mode == "実時間"),
+)
+
+c1, c2 = st.columns(2)
+with c1:
+    start_hms = st.text_input("start（HH:MM:SS）", value="")
+with c2:
+    end_hms = st.text_input("end（HH:MM:SS）", value="")
+
+grid_choice = st.radio("縦補助線（時間間隔）", GRID_CHOICES, index=2, horizontal=True)
+calc_rpm_stats = st.checkbox("rpmの1分平均・±σをrawグラフに重ねて表示する", value=False)
+
+st.divider()
+
+# ========== 3) グラフ（最後に表示） ==========
+st.subheader("3) グラフ結果")
+
+# start/endでスライス
 rpm_df, rpm_base = (None, pd.NaT)
 pv_df, pv_base = (None, pd.NaT)
 batt_df, batt_base = (None, pd.NaT)
@@ -197,7 +198,6 @@ if pv_raw is not None and not pv_raw.empty:
 if batt_raw is not None and not batt_raw.empty:
     batt_df, batt_base = apply_time_range(batt_raw, start_hms, end_hms)
 
-# 表示範囲（共通）
 ranges = []
 for df in [rpm_df, pv_df, batt_df]:
     if df is not None and not df.empty:
@@ -209,20 +209,18 @@ if not ranges:
 x_start = min(r[0] for r in ranges)
 x_end   = max(r[1] for r in ranges)
 
-# 経過時間の基準（start入力があればその時刻、なければ表示対象の最小時刻）
+# 経過時間基準
 bases = []
 for df, base in [(rpm_df, rpm_base), (pv_df, pv_base), (batt_df, batt_base)]:
     if df is not None and not df.empty and pd.notna(base):
         bases.append(base)
 global_base = min(bases) if bases else x_start
 
-# rpm統計（表示がONなら毎回計算）
+# rpm統計（必要な時だけ）
 rpm_stats = None
 if calc_rpm_stats and (rpm_df is not None) and (not rpm_df.empty):
     rpm_stats = rpm_minute_stats_step(rpm_df["realpower"])
 
-# ---- グラフ ----
-st.subheader("グラフ結果（パラメータ変更で即再描画）")
 fig, ax = plt.subplots(figsize=(14, 6))
 
 if xaxis_mode == "実時間":
@@ -278,7 +276,6 @@ ax.grid(True, axis="y", alpha=0.3)
 ax.legend(loc="best")
 st.pyplot(fig, use_container_width=True)
 
-# ---- rpm stats table ----
 if calc_rpm_stats:
     if rpm_df is None or rpm_df.empty:
         st.info("rpm.csv が未選択（または範囲内データなし）のため、rpmの1分平均/σの表は表示しません。")
@@ -293,5 +290,4 @@ if calc_rpm_stats:
         )
 
 st.success("完了（データは保持中：再読込するまで固定）")
-
 
