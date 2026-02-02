@@ -179,7 +179,7 @@ with c2:
     end_hms = st.text_input("end（HH:MM:SS）", value="")
 
 grid_choice = st.radio("縦補助線（時間間隔）", GRID_CHOICES, index=3, horizontal=True)
-calc_rpm_stats = st.checkbox("rpmの1分平均・±σをrawグラフに重ねて表示する", value=False)
+calc_rpm_stats = st.checkbox("rpmの1分平均・±σをrawグラフに重ねて表示すよ", value=False)
 
 st.divider()
 
